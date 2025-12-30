@@ -17,7 +17,7 @@ unsafe fn p_entrypoint(input: *mut u8) -> Option<u64> {
     let (program_id, count, instruction_data) =
         pinocchio::entrypoint::deserialize(input, &mut accounts);
 
-    if program_id != crate::ID.as_array() {
+    if program_id != crate::ID.as_ref() {
         // just fall back to anchor entrypoint
         return None;
     }

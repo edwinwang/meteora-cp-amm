@@ -141,7 +141,7 @@ pub fn p_accessor_decimals(
 pub fn validate_mut_token_account(token_account: &AccountInfo) -> Result<()> {
     require!(token_account.is_writable(), ErrorCode::AccountNotMutable);
     require!(
-        token_account.owner() != system_program::ID.as_array() || token_account.lamports() > 0,
+        token_account.owner() != system_program::ID.as_ref() || token_account.lamports() > 0,
         ErrorCode::AccountNotInitialized
     );
     TokenAccount::check_owner(&Pubkey::new_from_array(*token_account.owner()))?;

@@ -125,19 +125,19 @@ impl<'info> SwapCtx<'info> {
         require!(
             pool_authority
                 .key()
-                .eq(const_pda::pool_authority::ID.as_array()),
+                .eq(const_pda::pool_authority::ID.as_ref()),
             ErrorCode::ConstraintAddress
         );
 
         let pool: pinocchio::account_info::RefMut<'_, Pool> = p_load_mut_checked(pool)?;
 
         require!(
-            pool.token_a_vault.as_array() == token_a_vault.key(),
+            pool.token_a_vault.as_ref() == token_a_vault.key(),
             ErrorCode::ConstraintHasOne
         );
 
         require!(
-            pool.token_b_vault.as_array() == token_b_vault.key(),
+            pool.token_b_vault.as_ref() == token_b_vault.key(),
             ErrorCode::ConstraintHasOne
         );
 
@@ -164,7 +164,7 @@ impl<'info> SwapCtx<'info> {
         // validate token a mint
         let token_a_mint_pk = p_accessor_mint(token_a_vault)?;
         require!(
-            token_a_mint.key() == token_a_mint_pk.as_array(),
+            token_a_mint.key() == token_a_mint_pk.as_ref(),
             ErrorCode::ConstraintTokenMint
         );
         Mint::check_owner(&Pubkey::new_from_array(*token_a_mint.owner()))?;
@@ -172,7 +172,7 @@ impl<'info> SwapCtx<'info> {
         // validate token b mint
         let token_b_mint_pk = p_accessor_mint(token_b_vault)?;
         require!(
-            token_b_mint.key() == token_b_mint_pk.as_array(),
+            token_b_mint.key() == token_b_mint_pk.as_ref(),
             ErrorCode::ConstraintTokenMint
         );
         Mint::check_owner(&Pubkey::new_from_array(*token_b_mint.owner()))?;
@@ -191,7 +191,7 @@ impl<'info> SwapCtx<'info> {
         );
 
         // validate referral account
-        if referral_token_account.key() != crate::ID.as_array() {
+        if referral_token_account.key() != crate::ID.as_ref() {
             validate_mut_token_account(referral_token_account)?;
         }
 
