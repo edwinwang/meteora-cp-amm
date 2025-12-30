@@ -27,8 +27,8 @@ pub mod tests;
 pub mod pool_action_access;
 pub use pool_action_access::*;
 
+#[cfg(not(feature = "no-entrypoint"))]
 mod entrypoint;
-pub use entrypoint::entrypoint;
 
 pub mod params;
 
