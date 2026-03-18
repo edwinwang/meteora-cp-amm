@@ -1,8 +1,10 @@
+use crate::const_pda::{EVENT_AUTHORITY_AND_BUMP, EVENT_AUTHORITY_SEEDS};
+use crate::constants::RATE_LIMITER_STACK_WHITELIST_PROGRAMS;
 use crate::p_helper::{
     p_accessor_mint, p_get_number_of_accounts_in_instruction, p_load_mut_unchecked,
     p_transfer_from_pool, p_transfer_from_user,
 };
-use crate::state::SwapResult2;
+use crate::state::CollectFeeMode;
 use crate::{instruction::Swap as SwapInstruction, instruction::Swap2 as Swap2Instruction};
 use crate::{
     process_swap_exact_in, process_swap_exact_out, process_swap_partial_fill, EvtSwap2,
@@ -15,7 +17,7 @@ use anchor_lang::solana_program::instruction::{
 use pinocchio::account_info::AccountInfo;
 use pinocchio::sysvars::instructions::{Instructions, IntrospectedInstruction, INSTRUCTIONS_ID};
 
-use crate::safe_math::SafeMath;
+use crate::safe_math::{SafeCast, SafeMath};
 use crate::{
     activation_handler::ActivationHandler,
     get_pool_access_validator,
@@ -84,6 +86,8 @@ pub fn p_handle_swap(
         );
     }
 
+    pool.update_layout_version_if_needed()?;
+
     let &SwapParameters2 {
         amount_0,
         amount_1,
@@ -145,7 +149,8 @@ pub fn p_handle_swap(
     let current_timestamp = Clock::get()?.unix_timestamp as u64;
     pool.update_pre_swap(current_timestamp)?;
 
-    let fee_mode = FeeMode::get_fee_mode(pool.collect_fee_mode, trade_direction, has_referral)?;
+    let collect_fee_mode: CollectFeeMode = pool.collect_fee_mode.safe_cast()?;
+    let fee_mode = FeeMode::get_fee_mode(collect_fee_mode, trade_direction, has_referral);
 
     let process_swap_params = ProcessSwapParams {
         pool: &pool,
@@ -159,7 +164,7 @@ pub fn p_handle_swap(
     };
 
     let ProcessSwapResult {
-        swap_result,
+        mut swap_result,
         included_transfer_fee_amount_in,
         excluded_transfer_fee_amount_out,
         included_transfer_fee_amount_out,
@@ -169,9 +174,10 @@ pub fn p_handle_swap(
         SwapMode::ExactOut => process_swap_exact_out(process_swap_params),
     }?;
 
-    pool.apply_swap_result(&swap_result, &fee_mode, current_timestamp)?;
+    pool.apply_swap_result(&swap_result, &fee_mode, trade_direction, current_timestamp)?;
 
-    let SwapResult2 { referral_fee, .. } = swap_result;
+    // re-update next_sqrt_price for compounding pool
+    swap_result.next_sqrt_price = pool.sqrt_price;
 
     // send to reserve
     p_transfer_from_user(
@@ -202,7 +208,7 @@ pub fn p_handle_swap(
                 token_a_vault,
                 referral_token_account,
                 token_a_program,
-                referral_fee,
+                swap_result.referral_fee,
             )
             .map_err(|err| ProgramError::from(u64::from(err)))?;
         } else {
@@ -212,13 +218,11 @@ pub fn p_handle_swap(
                 token_b_vault,
                 referral_token_account,
                 token_b_program,
-                referral_fee,
+                swap_result.referral_fee,
             )
             .map_err(|err| ProgramError::from(u64::from(err)))?;
         }
     }
-
-    let (reserve_a_amount, reserve_b_amount) = pool.get_reserves_amount()?;
 
     p_emit_cpi(
         anchor_lang::Event::data(&EvtSwap2 {
@@ -232,8 +236,8 @@ pub fn p_handle_swap(
             included_transfer_fee_amount_in,
             included_transfer_fee_amount_out,
             excluded_transfer_fee_amount_out,
-            reserve_a_amount,
-            reserve_b_amount,
+            reserve_a_amount: pool.token_a_amount,
+            reserve_b_amount: pool.token_b_amount,
         }),
         event_authority,
     )
@@ -263,8 +267,8 @@ fn p_emit_cpi(inner_data: Vec<u8>, authority_info: &AccountInfo) -> pinocchio::P
         &instruction,
         &[authority_info],
         &[pinocchio::instruction::Signer::from(&pinocchio::seeds!(
-            crate::EVENT_AUTHORITY_SEEDS,
-            &[crate::EVENT_AUTHORITY_AND_BUMP.1]
+            EVENT_AUTHORITY_SEEDS,
+            &[EVENT_AUTHORITY_AND_BUMP.1]
         ))],
     )
 }
@@ -290,10 +294,13 @@ pub fn validate_single_swap_instruction<'c, 'info>(
         .load_instruction_at(current_index.into())
         .map_err(|err| ProgramError::from(u64::from(err)))?;
 
-    if current_instruction.get_program_id() != crate::ID.as_ref() {
+    let current_ix_program = current_instruction.get_program_id();
+    if current_ix_program != crate::ID.as_ref() {
         // check if current instruction is CPI
         // disable any stack height greater than 2
-        if get_stack_height() > 2 {
+        if get_stack_height() > 2
+            && !RATE_LIMITER_STACK_WHITELIST_PROGRAMS.contains(current_ix_program)
+        {
             return Err(PoolError::FailToValidateSingleSwapInstruction.into());
         }
         // check for any sibling instruction
